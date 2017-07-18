@@ -19,8 +19,6 @@ import (
 	"flag"
 	"path"
 	"github.com/dustin/go-humanize"
-	//"github.com/whosonfirst/walk"
-	//"github.com/MichaelTJones/walk"
 	"github.com/djherbis/times"
 	"reflect"
 )
@@ -174,12 +172,12 @@ func initSystem()  {
 	if (configGlobal.dropboxClientsecret == ""){ fmt.Println("Dropbox ClientSecret is not set in config.ini"); os.Exit(1); }
 	if (configGlobal.dropboxToken == ""){ fmt.Println("Dropbox Token is not set in config.ini"); os.Exit(1); }
 
-	//читаем старый список файлов
+	//read old file list
 	if _, err := os.Stat(configGlobal.execDir + configGlobal.dbFile); os.IsNotExist(err) {
-		//базы нет
+		//first start
 		fmt.Print("processing full backup...")
 	}else {
-		//база есть, открываем ... открываем только когда не нужен полная копия
+		//open file database ... only when requested ..
 		if (configGlobal.scheduleFullArchiveDays[int64(configGlobal.timeStart.Day())] == 0){
 			backupType = "incremental"
 			fmt.Print("processing incremental backup...")
@@ -267,9 +265,8 @@ func DropboxCLean()  {
 				fName := filepath.Base(subentry.Path[offset:])
 				extName := filepath.Ext(subentry.Path[offset:])
 				bName := fName[:len(fName)-len(extName)]
-				archiveDate, err := time.Parse("test_2006_01_02_15:04:05", bName)
+				archiveDate, err := time.Parse(configGlobal.archivePrefix + "_2006_01_02_15:04:05", bName)
 				if err != nil {
-					//panic(err)
 					continue
 				}
 				if (archiveDate.Unix() < archiveKeepDate){
@@ -281,8 +278,6 @@ func DropboxCLean()  {
 			}
 		}
 	}
-
-	//fmt.Println("...done")
 
 
 }
@@ -322,8 +317,6 @@ func archiveUpload(archiveFile string) error {
 
 	if _, err = dropboxConnection.UploadByChunk(zipfile, dropbox.DefaultChunkSize, archiveFileName, true, ""); err != nil {
 		return  err
-		//fmt.Fprintf(os.Stderr, "%s: %s\n", archiveFileName, err)
-		//os.Exit(1)
 	}
 	zipfile.Close()
 	return  nil
@@ -365,7 +358,6 @@ func main() {
 				os.Remove(configGlobal.execDir + fileName)
 
 				zipArchivePart += 1
-				//sizeCurrent = 0
 				fileName =  archiveName + fmt.Sprintf("_part%d", zipArchivePart) + ".zip"
 				fmt.Println("\tcreate " + fileName)
 				zipFile, err = os.Create(configGlobal.execDir + fileName)
@@ -390,17 +382,12 @@ func main() {
 			if info.IsDir() {
 				return nil
 			}
-			//TODO есть ли еще какие то типы файлов? ссылки?
+			//TODO check for other file types
 			if header.Mode().IsRegular() {
 				var MD5FileName string = GetMD5Hash(path)
 				var ctime int64 = 0
 				fi, _ := times.Stat(path)
-				//TODO проверить!!! больши ошибки не должны появляться и проверку можно убрать
-				//if err != nil { //ошибка происходит на симлинках, когда нет исходного файла
-				//	ctime = 0
-				//}else {
-					ctime = fi.ChangeTime().Unix()
-				//}
+				ctime = fi.ChangeTime().Unix()
 
 				currentFile := FileInfoStruct{path, info.Size(), info.ModTime().Unix(), ctime}
 
@@ -429,10 +416,8 @@ func main() {
 				AllFilesList[MD5FileName] = currentFile
 			}
 
-			//zipArchive.Flush() //это не нужно, сохранение и так происходит каждые 4kb
 			zipInfo, _ := zipFile.Stat()
 			sizeCurrent = zipInfo.Size()
-			//fmt.Printf("\t%s\n", humanize.Bytes(uint64(zipInfo.Size())))
 
 			return nil
 		})
@@ -482,7 +467,7 @@ func main() {
 	}
 	if (len(UpdatedFilesList) > 0){
 		fmt.Fprintf(logBuffer, "Updated files (%d):\n", len(UpdatedFilesList))
-		for _, v := range UpdatedFilesList { fmt.Fprintf(logBuffer, "\t%(archive %d) s\n", v.ArchivePart, v.Name) }
+		for _, v := range UpdatedFilesList { fmt.Fprintf(logBuffer, "\t(archive %d) %s\n", v.ArchivePart, v.Name) }
 		fmt.Fprint(logBuffer, "===============================================================================\n")
 	}
 	if (len(DeletedFilesList) > 0){
@@ -523,7 +508,6 @@ func main() {
 		encoder.Encode(AllFilesList)
 	}
 	file.Close()
-	//os.Remove(reportFileName)
 	fmt.Printf("\nAll work done! (take %s)\n", SecToTime(int64(time.Now().Sub(configGlobal.timeStart).Seconds())))
 
 }
