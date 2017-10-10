@@ -12,11 +12,11 @@ import (
 	"encoding/hex"
 	"archive/zip"
 	"io"
-	"github.com/stacktic/dropbox"
+	"github.com/NightMan-1/go-dropbox"
+	"github.com/NightMan-1/go-dropy"
 	"time"
 	"bufio"
 	"strconv"
-	"flag"
 	"path"
 	"github.com/dustin/go-humanize"
 	"github.com/djherbis/times"
@@ -26,14 +26,14 @@ import (
 type configGlobalStruct struct {
 	Sources []string
 	dbFile, archivePrefix string
-	dropboxClientid, dropboxClientsecret, dropboxToken string
+	dropboxToken string
 	timeStart time.Time
 	scheduleKeep int64
 	scheduleFullArchiveDays map[int64]int64
 	execDir string
 }
 var configGlobal (configGlobalStruct)
-var dropboxConnection *dropbox.Dropbox
+var dropboxConnection *dropy.Client
 
 var zipFile *os.File
 var err error
@@ -67,7 +67,7 @@ func headText() string{
 	startTime := fmt.Sprintf("%d-%02d-%02d %02d:%02d:%02d",configGlobal.timeStart.Year(), configGlobal.timeStart.Month(), configGlobal.timeStart.Day(), configGlobal.timeStart.Hour(), configGlobal.timeStart.Minute(), configGlobal.timeStart.Second())
 
 	headText := "###############################################################################\n"
-	headText += "GoBackup to Dropbox version 1.0\n"
+	headText += "GoBackup to Dropbox version 1.1\n"
 	headText += "Server Name - " + hostname + "\n"
 	if (backupType != "") {
 		headText += "Backup type: " + backupType + "\n"
@@ -103,8 +103,6 @@ func initSystem()  {
 	rComment, _ := regexp.Compile(`#`)
 	rDBFile, _ := regexp.Compile(`.*db_file.*=\W*(.+)$`)
 	rarchivePrefix, _ := regexp.Compile(`.*archive_prefix.*=\W*(.+)$`)
-	rdropboxClientid , _ := regexp.Compile(`.*dropbox_clientid.*=\W*(.+)$`)
-	rdropboxClientsecret, _ := regexp.Compile(`.*dropbox_clientsecret.*=\W*(.+)$`)
 	rdropboxToken, _ := regexp.Compile(`.*dropbox_token.*=\W*(.+)$`)
 
 	rdScheduleFullArchiveDays, _ := regexp.Compile(`.*full_archive.*=\W*(.+)$`)
@@ -137,10 +135,6 @@ func initSystem()  {
 		if (len(checkArchivePrefix) == 2){configGlobal.archivePrefix = checkArchivePrefix[1] }
 
 		//dropbox
-		checkDropboxClientid := rdropboxClientid.FindStringSubmatch(str)
-		if (len(checkDropboxClientid) == 2){ configGlobal.dropboxClientid = checkDropboxClientid[1] }
-		checkDropboxClientsecret := rdropboxClientsecret.FindStringSubmatch(str)
-		if (len(checkDropboxClientsecret) == 2){ configGlobal.dropboxClientsecret = checkDropboxClientsecret[1] }
 		checkDropboxToken := rdropboxToken.FindStringSubmatch(str)
 		if (len(checkDropboxToken) == 2){ configGlobal.dropboxToken = checkDropboxToken[1] }
 
@@ -168,8 +162,6 @@ func initSystem()  {
 
 	if (configGlobal.dbFile == ""){ fmt.Println("DB file is not set in config.ini"); os.Exit(1); }
 
-	if (configGlobal.dropboxClientid == ""){ fmt.Println("Dropbox ClientID is not set in config.ini"); os.Exit(1); }
-	if (configGlobal.dropboxClientsecret == ""){ fmt.Println("Dropbox ClientSecret is not set in config.ini"); os.Exit(1); }
 	if (configGlobal.dropboxToken == ""){ fmt.Println("Dropbox Token is not set in config.ini"); os.Exit(1); }
 
 	//read old file list
@@ -199,12 +191,7 @@ func initSystem()  {
 	}
 
 	//connect to Dropbox
-	dropboxConnection = dropbox.NewDropbox()
-	err = dropboxConnection.SetAppInfo(configGlobal.dropboxClientid, configGlobal.dropboxClientsecret)
-	check(err, "Can not connect to Dropbox")
-	dropboxConnection.SetAccessToken(configGlobal.dropboxToken)
-
-
+	dropboxConnection = dropy.New(dropbox.New(dropbox.NewConfig(configGlobal.dropboxToken)))
 
 }
 
@@ -229,54 +216,29 @@ func StrToInit64(s string) int64 {
 func DropboxCLean()  {
 	fmt.Println("Check old archives...")
 
-	var cl *flag.FlagSet
-	var all, long, nochild bool
-	var files []string
-	var entry *dropbox.Entry
-	var subentry dropbox.Entry
-	var err error
-
-	cl = flag.NewFlagSet("list", flag.ExitOnError)
-	cl.BoolVar(&all, "a", false, "Show deleted entries.")
-	cl.BoolVar(&nochild, "d", false, "Do not show children for a directory.")
-	cl.BoolVar(&long, "l", false, "Display long format.")
+	files, err := dropboxConnection.ListFiles("/")
+	check(err, "Error 5342")
 
 	archiveKeepDate := configGlobal.timeStart.AddDate(0, 0, -int(configGlobal.scheduleKeep)).Unix()
 
-	files = cl.Args()
-	if len(files) == 0 {
-		files = []string{"/"}
-	}
 	for _, file := range files {
-		file = path.Clean("/" + file)
-		if entry, err = dropboxConnection.Metadata(file, !nochild, all, "", "", 0); err != nil {
-			fmt.Println(err)
+		if (file.IsDir()){
 			continue
 		}
-		if entry.IsDir {
-			offset := len(file)
-			if file != "/" {
-				offset++
-			}
-			if len(entry.Contents) == 0 {
-				continue
-			}
-			for _, subentry = range entry.Contents {
-				fName := filepath.Base(subentry.Path[offset:])
-				extName := filepath.Ext(subentry.Path[offset:])
-				bName := fName[:len(fName)-len(extName)]
-				archiveDate, err := time.Parse(configGlobal.archivePrefix + "_2006_01_02_15:04:05", bName)
-				if err != nil {
-					continue
-				}
-				if (archiveDate.Unix() < archiveKeepDate){
-					fmt.Println("\t deleting " +  subentry.Path)
-					dropboxConnection.Delete(subentry.Path)
+		fName := filepath.Base(file.Name())
+		extName := filepath.Ext(file.Name())
+		bName := fName[:len(fName)-len(extName)]
 
-				}
-
-			}
+		archiveDate, err := time.Parse(configGlobal.archivePrefix + "_2006_01_02_15-04-05", bName)
+		if err != nil {
+			continue
 		}
+		if (archiveDate.Unix() < archiveKeepDate){
+			fmt.Println("\t deleting /" +  file.Name())
+			dropboxConnection.Delete("/" + file.Name())
+
+		}
+
 	}
 
 
@@ -307,7 +269,7 @@ func addToArchive(path string, writer io.Writer, info os.FileInfo ) error {
 }
 
 func archiveUpload(archiveFile string) error {
-	archiveFileName := path.Base(archiveFile)
+	archiveFileName := "/" + path.Base(archiveFile)
 
 	zipfile, err := os.Open(archiveFile)
 	check(err, "Error: can not open " + archiveFile)
@@ -315,11 +277,9 @@ func archiveUpload(archiveFile string) error {
 	info, _ := zipfile.Stat()
 	zipArchiveSizeTotal += info.Size()
 
-	if _, err = dropboxConnection.UploadByChunk(zipfile, dropbox.DefaultChunkSize, archiveFileName, true, ""); err != nil {
-		return  err
-	}
+	err = dropboxConnection.UploadSession(archiveFileName, zipfile)
 	zipfile.Close()
-	return  nil
+	return  err
 
 }
 
@@ -332,95 +292,103 @@ func main() {
 
 	fmt.Print("Archive files...\n")
 
-	archiveName := configGlobal.archivePrefix + fmt.Sprintf("_%d_%02d_%02d_%02d:%02d:%02d", configGlobal.timeStart.Year(), configGlobal.timeStart.Month(), configGlobal.timeStart.Day(), configGlobal.timeStart.Hour(), configGlobal.timeStart.Minute(), configGlobal.timeStart.Second())
+	archiveName := configGlobal.archivePrefix + fmt.Sprintf("_%d_%02d_%02d_%02d-%02d-%02d", configGlobal.timeStart.Year(), configGlobal.timeStart.Month(), configGlobal.timeStart.Day(), configGlobal.timeStart.Hour(), configGlobal.timeStart.Minute(), configGlobal.timeStart.Second())
 
 	var fileName string = ""
 	for _, folder := range configGlobal.Sources {
-		fmt.Println("\tprocessing " + folder)
-		filepath.Walk(folder, func(path string, info os.FileInfo, err error) error {
-			//new archive
-			if (zipFile == nil){
-				zipArchivePart = 1
-				fileName =  archiveName + fmt.Sprintf("_part%d", zipArchivePart) + ".zip"
-				fmt.Println("\tcreate " + fileName)
-				zipFile, err = os.Create(configGlobal.execDir + fileName)
-				check(err, "Error 845")
-				zipArchive = zip.NewWriter(zipFile)
-			//new archive PART
-			}else if (zipFile != nil && (sizeCurrent > zipSourceSize || (sizeCurrent + info.Size() > zipSourceSize && sizeCurrent/2 > zipSourceSize))){
-				zipArchive.Close()
-				zipInfo, _ := zipFile.Stat()
-				zipFile.Close()
-				//upload to dropbox
-				fmt.Printf("\tupload %s (%s)\n", fileName, humanize.Bytes(uint64(zipInfo.Size())))
-				err = archiveUpload(configGlobal.execDir + fileName)
-				check(err, "Upload error")
-				os.Remove(configGlobal.execDir + fileName)
+		if _, err := os.Stat(folder); err == nil {
+			fmt.Println("\tprocessing " + folder)
+			filepath.Walk(folder, func(path string, info os.FileInfo, err error) error {
+				//new archive
+				if (zipFile == nil){
+					zipArchivePart = 1
+					fileName =  archiveName + fmt.Sprintf("_part%d", zipArchivePart) + ".zip"
+					fmt.Println("\tcreate " + fileName)
+					zipFile, err = os.Create(configGlobal.execDir + fileName)
+					check(err, "Error 845")
+					zipArchive = zip.NewWriter(zipFile)
+					//new archive PART
+				}else if (zipFile != nil && (sizeCurrent > zipSourceSize || (sizeCurrent + info.Size() > zipSourceSize && sizeCurrent/2 > zipSourceSize))){
+					zipArchive.Close()
+					zipInfo, _ := zipFile.Stat()
+					zipFile.Close()
+					//upload to dropbox
+					fmt.Printf("\tupload %s (%s)\n", fileName, humanize.Bytes(uint64(zipInfo.Size())))
+					err = archiveUpload(configGlobal.execDir + fileName)
+					check(err, "Upload error")
+					os.Remove(configGlobal.execDir + fileName)
 
-				zipArchivePart += 1
-				fileName =  archiveName + fmt.Sprintf("_part%d", zipArchivePart) + ".zip"
-				fmt.Println("\tcreate " + fileName)
-				zipFile, err = os.Create(configGlobal.execDir + fileName)
-				check(err, "Error 846")
-				zipArchive = zip.NewWriter(zipFile)
-			}
+					zipArchivePart += 1
+					fileName =  archiveName + fmt.Sprintf("_part%d", zipArchivePart) + ".zip"
+					fmt.Println("\tcreate " + fileName)
+					zipFile, err = os.Create(configGlobal.execDir + fileName)
+					check(err, "Error 846")
+					zipArchive = zip.NewWriter(zipFile)
+				}
 
-			header, err := zip.FileInfoHeader(info)
-			check(err, "error getting header " + path)
-			header.Name = path
+				header, err := zip.FileInfoHeader(info)
+				check(err, "error getting header " + path)
+				header.Name = path
 
-			if info.IsDir() {
-				header.Name += "/"
-				header.Method = zip.Store
-			} else {
-				header.Method = zip.Deflate
-			}
+				if info.IsDir() {
+					header.Name += "/"
+					header.Method = zip.Store
+				} else {
+					header.Method = zip.Deflate
+				}
 
-			writer, err := zipArchive.CreateHeader(header)
-			check(err, "Error 847")
+				writer, err := zipArchive.CreateHeader(header)
+				check(err, "Error 847")
 
-			if info.IsDir() {
-				return nil
-			}
-			//TODO check for other file types
-			if header.Mode().IsRegular() {
-				var MD5FileName string = GetMD5Hash(path)
-				var ctime int64 = 0
-				fi, _ := times.Stat(path)
-				ctime = fi.ChangeTime().Unix()
+				//TODO check не архивировать свои текущие архивы
+				r, _ := regexp.Compile(filepath.Clean(zipFile.Name()) + "$")
+				if (len(r.FindStringSubmatch(filepath.Clean(path))) > 0){
+					return nil
+				}
 
-				currentFile := FileInfoStruct{path, info.Size(), info.ModTime().Unix(), ctime}
+				if info.IsDir() {
+					return nil
+				}
+				//TODO check for other file types
+				if header.Mode().IsRegular() {
+					var MD5FileName string = GetMD5Hash(path)
+					var ctime int64 = 0
+					fi, _ := times.Stat(path)
+					ctime = fi.ChangeTime().Unix()
 
-				if oldFile, ok := OldFilesList[MD5FileName]; ok {
-					if (reflect.DeepEqual(oldFile, currentFile)){
-						//unchanged files
-						sizeUnchangedFiles += info.Size()
-						UnchangedFilesList[MD5FileName] = FileInfoStructSmall{path, zipArchivePart}
+					currentFile := FileInfoStruct{path, info.Size(), info.ModTime().Unix(), ctime}
+
+					if oldFile, ok := OldFilesList[MD5FileName]; ok {
+						if (reflect.DeepEqual(oldFile, currentFile)){
+							//unchanged files
+							sizeUnchangedFiles += info.Size()
+							UnchangedFilesList[MD5FileName] = FileInfoStructSmall{path, zipArchivePart}
+						}else{
+							//updated files
+							err = addToArchive(path, writer, info)
+							if err != nil { fmt.Println(err) }
+							sizeUpdatedFiles += info.Size()
+							//sizeCurrent += info.Size()
+							UpdatedFilesList[MD5FileName] = FileInfoStructSmall{path, zipArchivePart}
+						}
+						delete(OldFilesList, MD5FileName)
 					}else{
-						//updated files
+						//new files
 						err = addToArchive(path, writer, info)
 						if err != nil { fmt.Println(err) }
-						sizeUpdatedFiles += info.Size()
+						sizeNewFiles += info.Size()
 						//sizeCurrent += info.Size()
-						UpdatedFilesList[MD5FileName] = FileInfoStructSmall{path, zipArchivePart}
+						NewFilesList[MD5FileName] = FileInfoStructSmall{path, zipArchivePart}
 					}
-					delete(OldFilesList, MD5FileName)
-				}else{
-					//new files
-					err = addToArchive(path, writer, info)
-					if err != nil { fmt.Println(err) }
-					sizeNewFiles += info.Size()
-					//sizeCurrent += info.Size()
-					NewFilesList[MD5FileName] = FileInfoStructSmall{path, zipArchivePart}
+					AllFilesList[MD5FileName] = currentFile
 				}
-				AllFilesList[MD5FileName] = currentFile
-			}
 
-			zipInfo, _ := zipFile.Stat()
-			sizeCurrent = zipInfo.Size()
+				zipInfo, _ := zipFile.Stat()
+				sizeCurrent = zipInfo.Size()
 
-			return nil
-		})
+				return nil
+			})
+		}
 	}
 	DeletedFilesList = OldFilesList
 
@@ -511,4 +479,3 @@ func main() {
 	fmt.Printf("\nAll work done! (take %s)\n", SecToTime(int64(time.Now().Sub(configGlobal.timeStart).Seconds())))
 
 }
-
