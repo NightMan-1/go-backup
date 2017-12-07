@@ -39,6 +39,8 @@ var zipFile *os.File
 var err error
 var zipArchive *zip.Writer
 var zipSourceSize int64 =  2000000000 //2Gb
+//var zipSourceSize int64 =  256000000 //256Mb
+//var zipSourceSize int64 =  10000000 //10Mb
 var sizeNewFiles, sizeUpdatedFiles, sizeUnchangedFiles, sizeCurrent int64
 var zipArchivePart, zipArchiveSizeTotal int64
 var backupType string
@@ -67,7 +69,7 @@ func headText() string{
 	startTime := fmt.Sprintf("%d-%02d-%02d %02d:%02d:%02d",configGlobal.timeStart.Year(), configGlobal.timeStart.Month(), configGlobal.timeStart.Day(), configGlobal.timeStart.Hour(), configGlobal.timeStart.Minute(), configGlobal.timeStart.Second())
 
 	headText := "###############################################################################\n"
-	headText += "GoBackup to Dropbox version 1.1\n"
+	headText += "GoBackup to Dropbox version 1.2\n"
 	headText += "Server Name - " + hostname + "\n"
 	if (backupType != "") {
 		headText += "Backup type: " + backupType + "\n"
@@ -178,7 +180,13 @@ func initSystem()  {
 			decoder := gob.NewDecoder(file)
 			OldFilesListTmp := new(map[string]FileInfoStruct)
 			err = decoder.Decode(OldFilesListTmp)
-			check(err, "Error decode data file")
+			//check(err, "Error decode data file")
+			if err != nil {
+				file.Close()
+				os.Remove(configGlobal.execDir + configGlobal.dbFile)
+				fmt.Println("Error decode data file")
+				panic(err)
+			}
 			file.Close()
 			for k, v := range *OldFilesListTmp {
 				OldFilesList[k] = v
@@ -225,20 +233,19 @@ func DropboxCLean()  {
 		if (file.IsDir()){
 			continue
 		}
-		fName := filepath.Base(file.Name())
-		extName := filepath.Ext(file.Name())
-		bName := fName[:len(fName)-len(extName)]
 
-		archiveDate, err := time.Parse(configGlobal.archivePrefix + "_2006_01_02_15-04-05", bName)
-		if err != nil {
-			continue
+		rFileTime, _ := regexp.Compile(`^`+ configGlobal.archivePrefix + `_(\d\d\d\d_\d\d_\d\d_\d\d-\d\d-\d\d).+?`)
+		FileTimeArray := rFileTime.FindStringSubmatch(file.Name())
+		if (len(FileTimeArray) == 2){
+			archiveDate, err := time.Parse("2006_01_02_15-04-05", FileTimeArray[1])
+			if err != nil {
+				continue
+			}
+			if (archiveDate.Unix() < archiveKeepDate){
+				fmt.Println("\t deleting /" +  file.Name())
+				dropboxConnection.Delete("/" + file.Name())
+			}
 		}
-		if (archiveDate.Unix() < archiveKeepDate){
-			fmt.Println("\t deleting /" +  file.Name())
-			dropboxConnection.Delete("/" + file.Name())
-
-		}
-
 	}
 
 
