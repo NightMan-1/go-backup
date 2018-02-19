@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"os"
 	"path/filepath"
-	"encoding/gob"
 	"crypto/md5"
 	"encoding/hex"
 	"archive/zip"
@@ -20,7 +19,10 @@ import (
 	"path"
 	"github.com/dustin/go-humanize"
 	"github.com/djherbis/times"
-	"reflect"
+	lediscfg "github.com/siddontang/ledisdb/config"
+	"github.com/siddontang/ledisdb/ledis"
+	"encoding/json"
+	"runtime"
 )
 
 type configGlobalStruct struct {
@@ -31,37 +33,31 @@ type configGlobalStruct struct {
 	scheduleKeep int64
 	scheduleFullArchiveDays map[int64]int64
 	execDir string
+	backupType string
 }
 var configGlobal (configGlobalStruct)
 var dropboxConnection *dropy.Client
+var fileListDB *ledis.DB
 
 var zipFile *os.File
-var err error
 var zipArchive *zip.Writer
 var zipSourceSize int64 =  2000000000 //2Gb
 //var zipSourceSize int64 =  256000000 //256Mb
 //var zipSourceSize int64 =  10000000 //10Mb
 var sizeNewFiles, sizeUpdatedFiles, sizeUnchangedFiles, sizeCurrent int64
 var zipArchivePart, zipArchiveSizeTotal int64
-var backupType string
 
 
 type FileInfoStruct struct {
 	Name string
-	//Size, BirthTime, AccessTime, ModTime, ChangeTime int64
-	Size, ModTime, ChangeTime int64
-}
-type FileInfoStructSmall struct {
-	Name string
-	ArchivePart int64
+	Size, ModTime, ChangeTime, AddTime int64
 }
 
-var OldFilesList = make(map[string]FileInfoStruct)
-var DeletedFilesList = make(map[string]FileInfoStruct)
-var AllFilesList = make(map[string]FileInfoStruct)
-var NewFilesList = make(map[string]FileInfoStructSmall)
-var UpdatedFilesList = make(map[string]FileInfoStructSmall)
-var UnchangedFilesList = make(map[string]FileInfoStructSmall)
+var UnchangedFilesCount int64 = 0
+var AllFilesCount int64 = 0
+var NewFilesCount int64 = 0
+var UpdatedFilesCount int64 = 0
+var DeletedFilesCount int64 = 0
 
 //return program head
 func headText() string{
@@ -69,10 +65,10 @@ func headText() string{
 	startTime := fmt.Sprintf("%d-%02d-%02d %02d:%02d:%02d",configGlobal.timeStart.Year(), configGlobal.timeStart.Month(), configGlobal.timeStart.Day(), configGlobal.timeStart.Hour(), configGlobal.timeStart.Minute(), configGlobal.timeStart.Second())
 
 	headText := "###############################################################################\n"
-	headText += "GoBackup to Dropbox version 1.2\n"
+	headText += "GoBackup to Dropbox version 2.0\n"
 	headText += "Server Name - " + hostname + "\n"
-	if (backupType != "") {
-		headText += "Backup type: " + backupType + "\n"
+	if (configGlobal.backupType != "") {
+		headText += "Backup type: " + configGlobal.backupType + "\n"
 	}
 	headText += "Backup start at " + startTime  + "\n"
 	headText += "###############################################################################\n"
@@ -96,14 +92,16 @@ func initSystem()  {
 		configDataRaw, err = ioutil.ReadFile(configGlobal.execDir + "config.ini")
 		check(err, "Can not read config.ini")
 	}else{
-		configGlobal.execDir = "./"
+		configFilePath, _ := filepath.Abs("config.ini")
+		configGlobal.execDir = path.Dir(configFilePath) + "/"
+
 	}
 	configDataStr := string(configDataRaw)
 	configDataArray := strings.Split(configDataStr, "\n")
 	rS, _ := regexp.Compile(`\[sources\]`)
 	rE, _ := regexp.Compile(`\[`)
 	rComment, _ := regexp.Compile(`#`)
-	rDBFile, _ := regexp.Compile(`.*db_file.*=\W*(.+)$`)
+	//rDBFile, _ := regexp.Compile(`.*db_dir.*=\W*(.+)$`)
 	rarchivePrefix, _ := regexp.Compile(`.*archive_prefix.*=\W*(.+)$`)
 	rdropboxToken, _ := regexp.Compile(`.*dropbox_token.*=\W*(.+)$`)
 
@@ -130,8 +128,8 @@ func initSystem()  {
 			sourcesCheck = false
 		}
 
-		checkDBConf := rDBFile.FindStringSubmatch(str)
-		if (len(checkDBConf) == 2){configGlobal.dbFile = checkDBConf[1] }
+		//checkDBConf := rDBFile.FindStringSubmatch(str)
+		//if (len(checkDBConf) == 2){configGlobal.dbFile = checkDBConf[1] }
 
 		checkArchivePrefix := rarchivePrefix.FindStringSubmatch(str)
 		if (len(checkArchivePrefix) == 2){configGlobal.archivePrefix = checkArchivePrefix[1] }
@@ -162,40 +160,41 @@ func initSystem()  {
 		}
 	}
 
-	if (configGlobal.dbFile == ""){ fmt.Println("DB file is not set in config.ini"); os.Exit(1); }
+	//if (configGlobal.dbFile == ""){ fmt.Println("DB file is not set in config.ini"); os.Exit(1); }
 
 	if (configGlobal.dropboxToken == ""){ fmt.Println("Dropbox Token is not set in config.ini"); os.Exit(1); }
 
 	//read old file list
-	if _, err := os.Stat(configGlobal.execDir + configGlobal.dbFile); os.IsNotExist(err) {
+	//if _, err := os.Stat(configGlobal.execDir + configGlobal.dbFile); os.IsNotExist(err) {
+	if _, err := os.Stat(configGlobal.execDir + "data"); os.IsNotExist(err) {
 		//first start
+		configGlobal.backupType = "full"
 		fmt.Print("processing full backup...")
 	}else {
-		//open file database ... only when requested ..
 		if (configGlobal.scheduleFullArchiveDays[int64(configGlobal.timeStart.Day())] == 0){
-			backupType = "incremental"
+			configGlobal.backupType = "incremental"
 			fmt.Print("processing incremental backup...")
-			file, err := os.Open(configGlobal.execDir + configGlobal.dbFile)
-			check(err, "Error open data file")
-			decoder := gob.NewDecoder(file)
-			OldFilesListTmp := new(map[string]FileInfoStruct)
-			err = decoder.Decode(OldFilesListTmp)
-			//check(err, "Error decode data file")
-			if err != nil {
-				file.Close()
-				os.Remove(configGlobal.execDir + configGlobal.dbFile)
-				fmt.Println("Error decode data file")
-				panic(err)
-			}
-			file.Close()
-			for k, v := range *OldFilesListTmp {
-				OldFilesList[k] = v
-			}
-			OldFilesListTmp = nil
 		}else{
-			backupType = "full"
+			configGlobal.backupType = "full"
 			fmt.Print("processing full backup...")
 		}
+	}
+
+	//open database
+	cfg := lediscfg.NewConfigDefault()
+	cfg.DataDir, _ = filepath.Abs(configGlobal.execDir +  "data")
+	//fmt.Println(cfg.DataDir)
+	l, _ := ledis.Open(cfg)
+	fileListDB, err = l.Select(0)
+	if err != nil {
+		os.Remove(cfg.DataDir)
+		fmt.Println("Error open data file")
+		panic(err)
+	}
+
+	if (configGlobal.backupType == "full"){
+		fileListDB.FlushAll()
+		l.CompactStore()
 	}
 
 	//connect to Dropbox
@@ -260,7 +259,20 @@ func SecToTime(seconds int64) string   {
 	return fmt.Sprintf("%02d:%02d:%02d", hours, m_diff, s_diff)
 }
 
-func addToArchive(path string, writer io.Writer, info os.FileInfo ) error {
+func addToArchive(path string, zipArchive *zip.Writer, info os.FileInfo ) error {
+	header, err := zip.FileInfoHeader(info)
+	check(err, "error getting header " + path)
+	header.Name = path
+
+	if info.IsDir() {
+		header.Name += "/"
+		header.Method = zip.Store
+	} else {
+		header.Method = zip.Deflate
+	}
+
+	writer, err := zipArchive.CreateHeader(header)
+	check(err, "Error 847")
 
 	file, err := os.Open(path)
 	if err != nil {
@@ -290,11 +302,68 @@ func archiveUpload(archiveFile string) error {
 
 }
 
+func checkFile(file FileInfoStruct) int {
+	var MD5FileName string = GetMD5Hash(file.Name)
+	var fileCheck FileInfoStruct
+	//0 = error, 1 = new, 2 = updated, 3 = not modified
+	fileType := 0
+
+	v, _ := fileListDB.Get([]byte(MD5FileName))
+	if (len(v) > 0){
+		err := json.Unmarshal(v, &fileCheck)
+		if err != nil {
+			return 0
+		}
+		//check file type
+		if (fileCheck.Name == file.Name && fileCheck.Size == file.Size && fileCheck.ChangeTime == file.ChangeTime && fileCheck.ModTime == file.ModTime){
+			//not modified
+			fileType = 3
+		}else{
+			//updated file
+			fileType = 2
+		}
+	}else{
+		//new file
+		fileType = 1
+	}
+	enc, err := json.Marshal(file)
+	check(err, "Something wrong:")
+
+	err = fileListDB.Set([]byte(MD5FileName), enc)
+	check(err, "Something wrong:")
+
+	return fileType
+}
+
+func debugInfo(){
+	fmt.Printf("\n%s\n", SecToTime(int64(time.Now().Sub(configGlobal.timeStart).Seconds())))
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	fmt.Printf("\nAlloc = %v\nTotalAlloc = %v\nSys = %v\nNumGC = %v\n\n", m.Alloc / 1024, m.TotalAlloc / 1024, m.Sys / 1024, m.NumGC)
+}
+
 func main() {
+	//TODO debug
+	defer os.Exit(0)
+	//defer debugInfo()
+
 	configGlobal.timeStart = time.Now()
 	fmt.Print(headText())
 	fmt.Print("Init system...")
 	initSystem()
+
+	//temp files for new/updated files list
+	tmpNewFiles, err := ioutil.TempFile("", "tmp")
+	check(err, "Something wrong:")
+	defer os.Remove(tmpNewFiles.Name()) // clean up
+	tmpUpdateFiles, err := ioutil.TempFile("", "tmp")
+	check(err, "Something wrong:")
+	defer os.Remove(tmpUpdateFiles.Name()) // clean up
+	tmpDeletedFiles, err := ioutil.TempFile("", "tmp")
+	check(err, "Something wrong:")
+	defer os.Remove(tmpDeletedFiles.Name()) // clean up
+
+
 	fmt.Print("\n")
 
 	fmt.Print("Archive files...\n")
@@ -314,8 +383,9 @@ func main() {
 					zipFile, err = os.Create(configGlobal.execDir + fileName)
 					check(err, "Error 845")
 					zipArchive = zip.NewWriter(zipFile)
-					//new archive PART
-				}else if (zipFile != nil && (sizeCurrent > zipSourceSize || (sizeCurrent + info.Size() > zipSourceSize && sizeCurrent/2 > zipSourceSize))){
+					//new PART of archive
+				}else
+				if (zipFile != nil && (sizeCurrent > zipSourceSize || (sizeCurrent + info.Size() > zipSourceSize && sizeCurrent/2 > zipSourceSize))){
 					zipArchive.Close()
 					zipInfo, _ := zipFile.Stat()
 					zipFile.Close()
@@ -333,21 +403,7 @@ func main() {
 					zipArchive = zip.NewWriter(zipFile)
 				}
 
-				header, err := zip.FileInfoHeader(info)
-				check(err, "error getting header " + path)
-				header.Name = path
-
-				if info.IsDir() {
-					header.Name += "/"
-					header.Method = zip.Store
-				} else {
-					header.Method = zip.Deflate
-				}
-
-				writer, err := zipArchive.CreateHeader(header)
-				check(err, "Error 847")
-
-				//TODO check не архивировать свои текущие архивы
+				//не архивировать свои текущие архивы
 				r, _ := regexp.Compile(filepath.Clean(zipFile.Name()) + "$")
 				if (len(r.FindStringSubmatch(filepath.Clean(path))) > 0){
 					return nil
@@ -356,38 +412,44 @@ func main() {
 				if info.IsDir() {
 					return nil
 				}
+
 				//TODO check for other file types
-				if header.Mode().IsRegular() {
-					var MD5FileName string = GetMD5Hash(path)
+				if info.Mode().IsRegular() {
 					var ctime int64 = 0
 					fi, _ := times.Stat(path)
 					ctime = fi.ChangeTime().Unix()
 
-					currentFile := FileInfoStruct{path, info.Size(), info.ModTime().Unix(), ctime}
+					currentFile := FileInfoStruct{path, info.Size(), info.ModTime().Unix(), ctime, configGlobal.timeStart.Unix()}
 
-					if oldFile, ok := OldFilesList[MD5FileName]; ok {
-						if (reflect.DeepEqual(oldFile, currentFile)){
-							//unchanged files
-							sizeUnchangedFiles += info.Size()
-							UnchangedFilesList[MD5FileName] = FileInfoStructSmall{path, zipArchivePart}
-						}else{
-							//updated files
-							err = addToArchive(path, writer, info)
-							if err != nil { fmt.Println(err) }
-							sizeUpdatedFiles += info.Size()
-							//sizeCurrent += info.Size()
-							UpdatedFilesList[MD5FileName] = FileInfoStructSmall{path, zipArchivePart}
-						}
-						delete(OldFilesList, MD5FileName)
-					}else{
+					//0 = error, 1 = new, 2 = updated, 3 = not modified
+					fileType := checkFile(currentFile)
+					switch fileType {
+					case 3:
+						//unchanged files
+						sizeUnchangedFiles += info.Size()
+						UnchangedFilesCount += 1
+					case 2:
+						//updated files
+						err = addToArchive(path, zipArchive, info)
+						if err != nil { fmt.Println(err) }
+						sizeUpdatedFiles += info.Size()
+						fmt.Fprintf(tmpUpdateFiles, "\t(archive %d) %s\n", zipArchivePart, path)
+						UpdatedFilesCount += 1
+
+					case 1:
 						//new files
-						err = addToArchive(path, writer, info)
+						err = addToArchive(path, zipArchive, info)
 						if err != nil { fmt.Println(err) }
 						sizeNewFiles += info.Size()
-						//sizeCurrent += info.Size()
-						NewFilesList[MD5FileName] = FileInfoStructSmall{path, zipArchivePart}
+						fmt.Fprintf(tmpNewFiles, "\t(archive %d) %s\n", zipArchivePart, path)
+						NewFilesCount += 1
+
+					default:
+						fmt.Println("File type error: ", currentFile.Name)
 					}
-					AllFilesList[MD5FileName] = currentFile
+					AllFilesCount += 1
+
+
 				}
 
 				zipInfo, _ := zipFile.Stat()
@@ -397,7 +459,28 @@ func main() {
 			})
 		}
 	}
-	DeletedFilesList = OldFilesList
+
+	//find deleted files
+	cursor := []byte(nil)
+	for {
+		allDBData, err := fileListDB.Scan(ledis.KV, cursor, 0, false, "")
+		if (err != nil || len(allDBData) == 0) {
+			break
+		}
+		for _, elementID := range allDBData {
+			cursor = elementID
+			data, _ := fileListDB.Get(elementID)
+			var fileData FileInfoStruct
+			err := json.Unmarshal(data, &fileData)
+			check(err, "Something wrong:")
+			if ( fileData.AddTime != configGlobal.timeStart.Unix()){
+				DeletedFilesCount += 1
+				fmt.Fprintf(tmpDeletedFiles, "\t%s\n", fileData.Name)
+				fileListDB.Del(elementID)
+			}
+		}
+	}
+
 
 	if (zipFile != nil){
 		zipArchive.Close()
@@ -405,12 +488,13 @@ func main() {
 		zipFile.Close()
 
 		//nothing found
-		totalArchivedFiles := len(NewFilesList) + len(UpdatedFilesList)
+		totalArchivedFiles := NewFilesCount + UpdatedFilesCount
 		if (totalArchivedFiles == 0){
 			os.Remove(configGlobal.execDir + fileName)
 			fmt.Println("New/updated files not found.")
 			fmt.Printf("\nAll work done! (take %s)\n", SecToTime(int64(time.Now().Sub(configGlobal.timeStart).Seconds())))
-			os.Exit(0)
+			runtime.Goexit()
+
 		}
 
 		//upload to dropbox
@@ -428,26 +512,51 @@ func main() {
 	//prepare log file
 	fmt.Fprintf(logBuffer, "%s", headText())
 	fmt.Fprint(logBuffer, "Statistic:\n")
-	fmt.Fprintf(logBuffer,"\t found %d new files (%s)\n", len(NewFilesList), humanize.Bytes(uint64(sizeNewFiles)))
-	fmt.Fprintf(logBuffer,"\t found %d updated files (%s)\n", len(UpdatedFilesList), humanize.Bytes(uint64(sizeUpdatedFiles)))
-	fmt.Fprintf(logBuffer,"\t found %d deleted files\n", len(DeletedFilesList))
-	fmt.Fprintf(logBuffer,"\t found %d unchanged files (%s)\n", len(UnchangedFilesList), humanize.Bytes(uint64(sizeUnchangedFiles)))
-	fmt.Fprintf(logBuffer,"\t total %d files found (%s)\n", len(AllFilesList), humanize.Bytes(uint64(sizeNewFiles + sizeUnchangedFiles + sizeUpdatedFiles)))
+	fmt.Fprintf(logBuffer,"\t found %d new files (%s)\n", NewFilesCount, humanize.Bytes(uint64(sizeNewFiles)))
+	fmt.Fprintf(logBuffer,"\t found %d updated files (%s)\n", UpdatedFilesCount, humanize.Bytes(uint64(sizeUpdatedFiles)))
+	fmt.Fprintf(logBuffer,"\t found %d deleted files\n", DeletedFilesCount)
+	fmt.Fprintf(logBuffer,"\t found %d unchanged files (%s)\n", UnchangedFilesCount, humanize.Bytes(uint64(sizeUnchangedFiles)))
+	fmt.Fprintf(logBuffer,"\t total %d files found (%s)\n", AllFilesCount, humanize.Bytes(uint64(sizeNewFiles + sizeUnchangedFiles + sizeUpdatedFiles)))
 	fmt.Fprintf(logBuffer,"\t %d archives created (%s)\n", zipArchivePart, humanize.Bytes(uint64(zipArchiveSizeTotal)))
 	fmt.Fprint(logBuffer, "===============================================================================\n")
-	if (len(NewFilesList) > 0){
-		fmt.Fprintf(logBuffer, "New files (%d):\n", len(NewFilesList))
-		for _, v := range NewFilesList { fmt.Fprintf(logBuffer, "\t(archive %d) %s\n", v.ArchivePart, v.Name) }
+	if (NewFilesCount > 0){
+		fmt.Fprintf(logBuffer, "New files (%d):\n", NewFilesCount)
+		tmpNewFiles.Sync()
+		file, err := os.OpenFile(tmpNewFiles.Name(), os.O_RDWR, 0644)
+		check(err, "Something wrong:")
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			fmt.Fprintln(logBuffer, scanner.Text())
+		}
+		if err := scanner.Err(); err != nil { check(err, "Something wrong:") }
+		file.Close()
+
 		fmt.Fprint(logBuffer, "===============================================================================\n")
 	}
-	if (len(UpdatedFilesList) > 0){
-		fmt.Fprintf(logBuffer, "Updated files (%d):\n", len(UpdatedFilesList))
-		for _, v := range UpdatedFilesList { fmt.Fprintf(logBuffer, "\t(archive %d) %s\n", v.ArchivePart, v.Name) }
+	if (UpdatedFilesCount > 0){
+		fmt.Fprintf(logBuffer, "Updated files (%d):\n", UpdatedFilesCount)
+		tmpUpdateFiles.Sync()
+		file, err := os.OpenFile(tmpUpdateFiles.Name(), os.O_RDWR, 0644)
+		check(err, "Something wrong:")
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			fmt.Fprintln(logBuffer, scanner.Text())
+		}
+		if err := scanner.Err(); err != nil { check(err, "Something wrong:") }
+		file.Close()
 		fmt.Fprint(logBuffer, "===============================================================================\n")
 	}
-	if (len(DeletedFilesList) > 0){
-		fmt.Fprintf(logBuffer, "Deleted files (%d):\n", len(DeletedFilesList))
-		for _, v := range DeletedFilesList { fmt.Fprintf(logBuffer, "\t%s\n", v.Name) }
+	if (DeletedFilesCount > 0){
+		fmt.Fprintf(logBuffer, "Deleted files (%d):\n", DeletedFilesCount)
+		tmpDeletedFiles.Sync()
+		file, err := os.OpenFile(tmpUpdateFiles.Name(), os.O_RDWR, 0644)
+		check(err, "Something wrong:")
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			fmt.Fprintln(logBuffer, scanner.Text())
+		}
+		if err := scanner.Err(); err != nil { check(err, "Something wrong:") }
+		file.Close()
 		fmt.Fprint(logBuffer, "===============================================================================\n")
 	}
 
@@ -458,31 +567,21 @@ func main() {
 	check(err, "Can not upload log file")
 	os.Remove(configGlobal.execDir + reportFileName)
 
-	//TODO debug
-	//fmt.Printf("\n%s\n", SecToTime(int64(time.Now().Sub(configGlobal.timeStart).Seconds())))
-	//os.Exit(0)
-
-
 	//dropbox clean
 	DropboxCLean()
 
-
 	fmt.Println("Result:")
-	fmt.Printf("\t found %d new files (%s)\n", len(NewFilesList), humanize.Bytes(uint64(sizeNewFiles)))
-	fmt.Printf("\t found %d updated files (%s)\n", len(UpdatedFilesList), humanize.Bytes(uint64(sizeUpdatedFiles)))
-	fmt.Printf("\t found %d deleted files\n", len(DeletedFilesList))
-	fmt.Printf("\t found %d unchanged files (%s)\n", len(UnchangedFilesList), humanize.Bytes(uint64(sizeUnchangedFiles)))
-	fmt.Printf("\t total %d files found (%s)\n", len(AllFilesList), humanize.Bytes(uint64(sizeNewFiles + sizeUnchangedFiles + sizeUpdatedFiles)))
-
+	fmt.Printf("\t found %d new files (%s)\n", NewFilesCount, humanize.Bytes(uint64(sizeNewFiles)))
+	fmt.Printf("\t found %d updated files (%s)\n", UpdatedFilesCount, humanize.Bytes(uint64(sizeUpdatedFiles)))
+	fmt.Printf("\t found %d deleted files\n", DeletedFilesCount)
+	fmt.Printf("\t found %d unchanged files (%s)\n", UnchangedFilesCount, humanize.Bytes(uint64(sizeUnchangedFiles)))
+	fmt.Printf("\t total %d files found (%s)\n", AllFilesCount, humanize.Bytes(uint64(sizeNewFiles + sizeUnchangedFiles + sizeUpdatedFiles)))
 	fmt.Printf("\t %d archives created (%s)\n", zipArchivePart, humanize.Bytes(uint64(zipArchiveSizeTotal)))
 
-	//save on exit
-	file, err := os.Create(configGlobal.execDir + configGlobal.dbFile)
-	if err == nil {
-		encoder := gob.NewEncoder(file)
-		encoder.Encode(AllFilesList)
-	}
-	file.Close()
+	//exit
+	os.Remove(tmpNewFiles.Name())
+	os.Remove(tmpUpdateFiles.Name())
+	os.Remove(tmpDeletedFiles.Name())
 	fmt.Printf("\nAll work done! (take %s)\n", SecToTime(int64(time.Now().Sub(configGlobal.timeStart).Seconds())))
 
 }
