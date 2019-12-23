@@ -265,6 +265,31 @@ func SecToTime(seconds int64) string {
 	return fmt.Sprintf("%02d:%02d:%02d", hours, m_diff, s_diff)
 }
 
+func addSymLinks(simlinksList []string, zipArchive *zip.Writer) {
+	simlinksExecutable := "simlinks" + fmt.Sprintf("_%d_%02d_%02d_%02d-%02d-%02d", configGlobal.timeStart.Year(), configGlobal.timeStart.Month(), configGlobal.timeStart.Day(), configGlobal.timeStart.Hour(), configGlobal.timeStart.Minute(), configGlobal.timeStart.Second()) + ".sh"
+	simlinksExecutableFileName := configGlobal.execDir + simlinksExecutable
+	simlinksExecutableFile, err := os.Create(simlinksExecutableFileName)
+	simlinksExecutableFileBuffer := bufio.NewWriter(simlinksExecutableFile)
+	check(err, "Can not create simlinks restore file")
+	fmt.Fprint(simlinksExecutableFileBuffer, "#!/bin/sh\n\n")
+	for _, element := range simlinksList {
+		pathLink, _ := os.Readlink(element)
+		fmt.Fprintln(simlinksExecutableFileBuffer, "ln -s \""+pathLink+"\" \""+element+"\"")
+	}
+	simlinksExecutableFileBuffer.Flush()
+	simlinksExecutableFile.Close()
+	info, _ := os.Stat(simlinksExecutableFileName)
+
+	header, _ := zip.FileInfoHeader(info)
+	header.Name = "/" + simlinksExecutable
+	header.Method = zip.Deflate
+	writer, _ := zipArchive.CreateHeader(header)
+	file, _ := os.Open(configGlobal.execDir + simlinksExecutable)
+	_, _ = io.CopyN(writer, file, info.Size())
+	file.Close()
+	os.Remove(simlinksExecutableFileName)
+}
+
 func addToArchive(path string, zipArchive *zip.Writer, info os.FileInfo) error {
 	header, err := zip.FileInfoHeader(info)
 	check(err, "error getting header "+path)
@@ -376,6 +401,7 @@ func main() {
 	archiveName := configGlobal.archivePrefix + fmt.Sprintf("_%d_%02d_%02d_%02d-%02d-%02d", configGlobal.timeStart.Year(), configGlobal.timeStart.Month(), configGlobal.timeStart.Day(), configGlobal.timeStart.Hour(), configGlobal.timeStart.Minute(), configGlobal.timeStart.Second())
 
 	var fileName string = ""
+	var simlinksList []string
 	for _, folder := range configGlobal.Sources {
 		if _, err := os.Stat(folder); err == nil {
 			fmt.Println("\tprocessing " + folder)
@@ -390,6 +416,9 @@ func main() {
 					zipArchive = zip.NewWriter(zipFile)
 					//new PART of archive
 				} else if zipFile != nil && (sizeCurrent > zipSourceSize || (sizeCurrent+info.Size() > zipSourceSize && sizeCurrent/2 > zipSourceSize)) {
+					if len(simlinksList) > 0 {
+						addSymLinks(simlinksList, zipArchive)
+					}
 					zipArchive.Close()
 					zipInfo, _ := zipFile.Stat()
 					zipFile.Close()
@@ -398,6 +427,7 @@ func main() {
 					err = archiveUpload(configGlobal.execDir + fileName)
 					check(err, "Upload error")
 					os.Remove(configGlobal.execDir + fileName)
+					simlinksList = nil
 
 					zipArchivePart += 1
 					fileName = archiveName + fmt.Sprintf("_part%d", zipArchivePart) + ".zip"
@@ -417,7 +447,6 @@ func main() {
 					return nil
 				}
 
-				//TODO check for other file types
 				if info.Mode().IsRegular() {
 					//var MD5FileName string = GetMD5Hash(path)
 					var ctime int64 = 0
@@ -458,6 +487,8 @@ func main() {
 					}
 					AllFilesCount += 1
 
+				} else if (info.Mode() & os.ModeType) == os.ModeSymlink {
+					simlinksList = append(simlinksList, path)
 				}
 
 				zipInfo, _ := zipFile.Stat()
@@ -487,6 +518,10 @@ func main() {
 				fileListDB.Del(elementID)
 			}
 		}
+	}
+
+	if len(simlinksList) > 0 {
+		addSymLinks(simlinksList, zipArchive)
 	}
 
 	if zipFile != nil {
