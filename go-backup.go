@@ -66,7 +66,7 @@ func headText() string {
 	startTime := fmt.Sprintf("%d-%02d-%02d %02d:%02d:%02d", configGlobal.timeStart.Year(), configGlobal.timeStart.Month(), configGlobal.timeStart.Day(), configGlobal.timeStart.Hour(), configGlobal.timeStart.Minute(), configGlobal.timeStart.Second())
 
 	headText := "###############################################################################\n"
-	headText += "GoBackup to Dropbox version 2.0\n"
+	headText += "GoBackup to Dropbox version 2.1\n"
 	headText += "Server Name - " + hostname + "\n"
 	if configGlobal.backupType != "" {
 		headText += "Backup type: " + configGlobal.backupType + "\n"
