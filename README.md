@@ -18,5 +18,9 @@ go get github.com/siddontang/ledisdb/ledis
 go build go-backup.go
 ~~~
 
+##Command line parameters
+`--full` -  force full backup
+
+
 ## Credits
-Copyright © 2017 [Sergey Gurinovich](mailto:sergey@fsky.info).
+Copyright © 2017-2019 [Sergey Gurinovich](mailto:sergey@fsky.info).
