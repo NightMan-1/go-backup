@@ -173,7 +173,12 @@ func initSystem() {
 		configGlobal.backupType = "full"
 		fmt.Print("processing full backup...")
 	} else {
-		if configGlobal.scheduleFullArchiveDays[int64(configGlobal.timeStart.Day())] == 0 {
+		//check command line parameters
+		re := regexp.MustCompile(`full$`)
+		if len(os.Args) > 1 && re.MatchString(os.Args[1]) {
+			configGlobal.backupType = "full"
+			fmt.Print("processing full backup...")
+		} else if configGlobal.scheduleFullArchiveDays[int64(configGlobal.timeStart.Day())] == 0 {
 			configGlobal.backupType = "incremental"
 			fmt.Print("processing incremental backup...")
 		} else {
