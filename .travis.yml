@@ -6,11 +6,9 @@ go:
   - 1.13.x
 before_install:
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew update; fi
-  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew upgrade node; fi
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew install p7zip; fi
-  - if [[ "$TRAVIS_OS_NAME" == "windows" ]]; then choco install nodejs; fi
   - if [[ "$TRAVIS_OS_NAME" == "windows" ]]; then choco install 7zip; fi
-  - if [[ "$TRAVIS_OS_NAME" == "windows" ]]; then export "PATH=/c/Program Files/7-Zip:/c/Users/travis/gopath/bin:/c/Program Files/nodejs:$PATH"; fi
+  - if [[ "$TRAVIS_OS_NAME" == "windows" ]]; then export "PATH=/c/Program Files/7-Zip:/c/Users/travis/gopath/bin:$PATH"; fi
 install:
 
 script:
@@ -25,11 +23,11 @@ script:
 
 before_deploy:
   - export RELEASE_TITLE=$(date '+%Y%m%d%H%M%S')-$TRAVIS_JOB_NUMBER
-  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then 7z a -tzip go-backup-$TRAVIS_TAG-linux-x86.zip notes go-backup-linux-x86; fi
-  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then 7z a -tzip go-backup-$TRAVIS_TAG-linux-x64.zip notes go-backup-linux-x64; fi
+  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then 7z a -tzip go-backup-$TRAVIS_TAG-linux-x86.zip go-backup-linux-x86; fi
+  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then 7z a -tzip go-backup-$TRAVIS_TAG-linux-x64.zip go-backup-linux-x64; fi
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then 7z a -tzip go-backup-$TRAVIS_TAG-mac-x64.zip go-backup-mac-x64; fi
-  - if [[ "$TRAVIS_OS_NAME" == "windows" ]]; then 7z.exe a -tzip go-backup-$TRAVIS_TAG-win-x86.zip notes go-backup-windows-x86.exe; fi
-  - if [[ "$TRAVIS_OS_NAME" == "windows" ]]; then 7z.exe a -tzip go-backup-$TRAVIS_TAG-win-x64.zip notes go-backup-windows-x64.exe; fi
+  - if [[ "$TRAVIS_OS_NAME" == "windows" ]]; then 7z.exe a -tzip go-backup-$TRAVIS_TAG-win-x86.zip go-backup-windows-x86.exe; fi
+  - if [[ "$TRAVIS_OS_NAME" == "windows" ]]; then 7z.exe a -tzip go-backup-$TRAVIS_TAG-win-x64.zip go-backup-windows-x64.exe; fi
 deploy:
   provider: releases
   name: Release $TRAVIS_TAG ($RELEASE_TITLE)
