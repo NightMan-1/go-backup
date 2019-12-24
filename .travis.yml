@@ -45,6 +45,6 @@ deploy:
     - go-backup-$TRAVIS_TAG-mac-x64.zip
   draft: true
   on:
-    repo: NightMan-1/QVNote
+    repo: NightMan-1/go-backup
     tags: true
     all_branches: true
