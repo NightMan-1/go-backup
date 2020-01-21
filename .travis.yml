@@ -9,17 +9,18 @@ before_install:
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew install p7zip; fi
   - if [[ "$TRAVIS_OS_NAME" == "windows" ]]; then choco install 7zip; fi
   - if [[ "$TRAVIS_OS_NAME" == "windows" ]]; then export "PATH=/c/Program Files/7-Zip:/c/Users/travis/gopath/bin:$PATH"; fi
+env: GO111MODULE=on CGO_ENABLED=0
 install:
-
+  - go mod download
 script:
   # building MacOS binary
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then go build -o go-backup-mac-x64 && chmod a+x go-backup-mac-x64; fi
   # building Linux binary
-  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then export CGO_ENABLED=0; export GOOS=linux; export GOARCH=amd64; go build -o go-backup-linux-x64 && chmod a+x go-backup-linux-x64; fi
-  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then export CGO_ENABLED=0; export GOOS=linux; export GOARCH=386; go build -o go-backup-linux-x86 && chmod a+x go-backup-linux-x86; fi
+  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then export GOOS=linux; export GOARCH=amd64; go build -o go-backup-linux-x64 && chmod a+x go-backup-linux-x64; fi
+  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then export GOOS=linux; export GOARCH=386; go build -o go-backup-linux-x86 && chmod a+x go-backup-linux-x86; fi
   # building Windows binary
-  - if [[ "$TRAVIS_OS_NAME" == "windows" ]]; then export CGO_ENABLED=0; export GOOS=windows; export GOARCH=amd64; go build -o go-backup-windows-x64.exe; fi
-  - if [[ "$TRAVIS_OS_NAME" == "windows" ]]; then export CGO_ENABLED=0; export GOOS=windows; export GOARCH=386; go build -o go-backup-indows-x86.exe; fi
+  - if [[ "$TRAVIS_OS_NAME" == "windows" ]]; then export GOOS=windows; export GOARCH=amd64; go build -o go-backup-windows-x64.exe; fi
+  - if [[ "$TRAVIS_OS_NAME" == "windows" ]]; then export export GOOS=windows; export GOARCH=386; go build -o go-backup-windows-x86.exe; fi
 
 before_deploy:
   - export RELEASE_TITLE=$(date '+%Y%m%d%H%M%S')-$TRAVIS_JOB_NUMBER
@@ -34,7 +35,7 @@ deploy:
   file_glob: true
   skip_cleanup: true
   api_key:
-    secure: TxzJAhX1cg3vYlEPI5fVeSQK3GcCk7M1OzcotGejAC8wf2dPLqiNGK/aJj7wUoLm8d9oh7lcRjdQpSzaFSzkoSw8YYVHIjKADIt7CcXTQNXRJbjCuj5oJUxssQmrcVEulYzufjwXuqFr5Qy0H30cqb9JG+6gpuM5zUL4m3dew41rmu3tN9EsW24i7fB3rrvzxdO7l5CUZoL2Y4tc5jsROWo+yg8pwlFkisdzlpxL5MkOa5eVYElxvA+PNWxgmxNZkWsfhS+OwNZBvE9P0+ocTg6TNEZLSCV3FvBUVAxYECMECDkiMwuVYYW3dhCXoVORXl27d8pxwC0nsCmso417CUwyGEG7ZkRxgCHQkBY5/gRIULvSTQDJgjpXYJzBrip2ipvUd/7CwFwRz6CkDPye3tAL5vLvRBgRiU/jgXxVyb/28yVf5uTCehWHPrNohwQ0SSBWglbKMojZ45megxH2FzxWeBKbg7+J3Rowjd3tG31EyBef0USpvpOq0RI3MfmOMAL/AredvHPHN9VWRlVi0C2hCLY1k4Pe7MAe6X795wqr65TWgNUlv33DPhQRNNhPWwlhgKnNcGnJ0XdRJDia/m3aJTTrZtnjVP6p3EmthlDlMPr8QQ5cfvXduetq7h4hd+b2Lw4Gh39aPeGCgN95oSwt3I563Gy9ULzlBCi8KD4=
+    secure: IyPo2QjXo8QL081gR9eCJpNrwdWcSPyr88Yz5AEPFI59PK+QFnmSHFEqTAkhKDaX3ivEjgfhW+LKnqVw1y9+ulbo3oUa7kGwgHPlcCpKhvgVvK35zhW4ZK9EW1lvjdbTr2KcexA5vSSXe+Jl7+rv34a4UusDwn5TnB65wGXEIOK0q7FuDzLGR9tXmExcVD/vYtbGj/fOomUvM5ayF9aDF+cD/47ddnUcVA78IUAoSPKwQZc8/3czJVFEKCBEjGM1CpK0M8m1lphdxQg1q1lzI1kANbtggt8e5gnyWbsPsVOLzTIixJkdf4o8Sl5RZbEJM4ygM4BWXx3VsJCA2+U7gvdWrgY5xPYRnrSW6yMhP5mJjKIJWlTwdhpzJKPIzIwbh89aI4Q2pHbKDgL01UOdx7P/OZTTLil+4bGYzCzlrPF9meik/mb+XWZnk4Dbq4rLEus1OtImMfUGpZR54yAzXdMK2/uXsZ9DtAijWeLmdq8BXNiqwZT4S+9Qv7gJPEwaAAAUq2oro9ga3d9x83e0SPhWl4W4mtohF+WQ2j6kEwiysOMmzvfCK4sl5yKzQIqX1QU8CMChrJpXOUzmSRLeNB9SVbWQA4mPfPuI2mqr8m6HRtX9fo/sMuUBaN2Mhd+zMvPu1xAJhPS4L5q61cGI3gmq+RF/hXkzbkhSMY1lAv8=
   file:
     - go-backup-$TRAVIS_TAG-win-x86.zip
     - go-backup-$TRAVIS_TAG-win-x64.zip
