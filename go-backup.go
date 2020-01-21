@@ -3,7 +3,6 @@ package main
 import (
 	"archive/zip"
 	"bufio"
-	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -24,6 +23,7 @@ import (
 	"github.com/dustin/go-humanize"
 	lediscfg "github.com/siddontang/ledisdb/config"
 	"github.com/siddontang/ledisdb/ledis"
+	"lukechampine.com/blake3"
 )
 
 type configGlobalStruct struct {
@@ -66,7 +66,7 @@ func headText() string {
 	startTime := fmt.Sprintf("%d-%02d-%02d %02d:%02d:%02d", configGlobal.timeStart.Year(), configGlobal.timeStart.Month(), configGlobal.timeStart.Day(), configGlobal.timeStart.Hour(), configGlobal.timeStart.Minute(), configGlobal.timeStart.Second())
 
 	headText := "###############################################################################\n"
-	headText += "GoBackup to Dropbox version 2.1\n"
+	headText += "GoBackup to Dropbox version 2.2\n"
 	headText += "Server Name - " + hostname + "\n"
 	if configGlobal.backupType != "" {
 		headText += "Backup type: " + configGlobal.backupType + "\n"
@@ -210,8 +210,10 @@ func initSystem() {
 }
 
 func GetMD5Hash(text string) string {
-	hasher := md5.New()
+	hasher := blake3.New(64, nil)
 	hasher.Write([]byte(text))
+	// hasher := md5.New()
+	// hasher.Write([]byte(text))
 	return hex.EncodeToString(hasher.Sum(nil))
 }
 
