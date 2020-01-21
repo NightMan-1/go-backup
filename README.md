@@ -1,6 +1,10 @@
-# GoLang backup to Dropbox
+# Backup files to Dropbox
 
-Tested on Linux, Mac, Windows
+Compress files and upload zip archives to Dropbox folder
+
+Support incremental backup
+
+Work on Linux, Mac, Windows
 
 ## Installation
 
@@ -9,12 +13,7 @@ Tested on Linux, Mac, Windows
 3) modify config.ini __(not forgot create and add token!)__
 
 ~~~sh
-go get github.com/djherbis/times
-go get github.com/dustin/go-humanize
-go get github.com/NightMan-1/go-dropbox
-go get github.com/NightMan-1/go-dropy
-go get github.com/siddontang/ledisdb/ledis
-
+go mod download
 go build go-backup.go
 ~~~
 
@@ -23,4 +22,4 @@ go build go-backup.go
 
 
 ## Credits
-Copyright © 2017-2019 [Sergey Gurinovich](mailto:sergey@fsky.info).
+Copyright © 2017-2020 [Sergey Gurinovich](mailto:sergey@fsky.info)
