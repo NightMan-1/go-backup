@@ -14,5 +14,7 @@ require (
 	github.com/siddontang/ledisdb v0.0.0-20190202134119-8ceb77e66a92
 	github.com/siddontang/rdb v0.0.0-20150307021120-fc89ed2e418d // indirect
 	github.com/syndtr/goleveldb v1.0.0 // indirect
+	github.com/tj/go-dropbox v0.0.0-20171107035848-42dd2be3662d
+	github.com/tj/go-dropy v0.0.0-20151223190506-225699a12156
 	golang.org/x/net v0.0.0-20191209160850-c0dbc17a3553 // indirect
 )
